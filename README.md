@@ -32,7 +32,7 @@ A state-based implementation of nonlinear multiplication can suffer from low suc
 Instead of representing nonlinear multiplication only through state-based operations, we investigate representing the velocity field as a diagonal operator:
 
 $$
-D_u=\operatorname{diag}(u_0,u_1,\ldots,u_{N-1}).
+D_u = \mathrm{diag}(u_0, u_1, \ldots, u_{N-1})
 $$
 
 The nonlinear term can then be written as
@@ -175,7 +175,7 @@ Different bond dimensions are investigated to understand the trade-off between r
 The diagonal matrix associated with the velocity field is defined as
 
 $$
-D_u=\operatorname{diag}(u_0,u_1,\ldots,u_{N-1}).
+D_u=\mathrm{diag}(u_0,u_1,\ldots,u_{N-1}).
 $$
 
 The discrete nonlinear term can then be written as
