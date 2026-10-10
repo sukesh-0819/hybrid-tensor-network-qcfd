@@ -341,7 +341,7 @@ No quantum speedup is assumed. Any performance advantage would require further a
 ## 12. Contributors
 
 - **Team:** QFluid
-- **Contributors:** Sukesh Nasina, Akshay, Aaryan Sharma
+- **Contributors:** Sukesh Nasina, Akshay MS, Nikhileswar Pakala
 - **Project track:** Open Quantum Innovation
 
 ---
