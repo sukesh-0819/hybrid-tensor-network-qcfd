@@ -1,349 +1,514 @@
+# Hybrid Tensor-Network Quantum CFD
 
-# A Qiskit-based implementation of tensor-network block encoding for non linear Quantum Computational Fluid Dynamics
+A small, statevector-simulated prototype for time-stepping the one-dimensional viscous Burgers equation with a variational quantum circuit. It compares two ways to encode the nonlinear velocity field:
 
-**A research prototype exploring tensor-train representations and quantum algorithms for nonlinear partial differential equations (PDEs).**
+1. **Dense diagonal block encoding** (`experiments/run_simulation.py`): directly block-encodes the diagonal matrix formed from the current solution.
+2. **Tensor-train (TT) encoding** (`experiments/run_simulation_tn.py`): factors the variational state into a matrix product state and compiles its diagonal operator from local cores.
 
-## Why This Project?
+The project is intended as a hackathon-scale algorithm demonstration. The code uses Qiskit's classical `Statevector` simulator and SciPy optimizers; it does not run on quantum hardware or demonstrate a quantum speedup.
 
-Nonlinear partial differential equations are central to computational fluid dynamics (CFD), including the simulation of complex fluid flows. However, implementing nonlinear operations efficiently is a major challenge for quantum algorithms because quantum circuits implement linear unitary transformations.
+## How the pieces fit together
 
-This project investigates a hybrid quantum-classical approach to the Burgers' equation, focusing on a specific bottleneck: the success probability of quantum operations used to implement nonlinear terms.
+```text
+Burgers PDE
+   ↓ finite differences in space, forward Euler in time
+u[j+1] = O_full(u[j]) u[j]
+   ↓ represent u[j] as norm × normalized circuit state
+O_full = diffusion map + diagonal(field) × convection map
+   ↓ block encode each map and combine with a one-qubit LCU selector
+prefix circuit prepares a scaled O_full |psi[j]> branch
+   ↓ compare that branch with a candidate ansatz state
+optimize the next circuit parameters and a comparison angle
+   ↓ recover the field norm and repeat
+```
 
-### The Key Challenge: Nonlinear Operations
+The tensor-network version changes how the diagonal field operator is compiled. The PDE discretization, linear operators, LCU time step, variational comparison, and norm update are otherwise the same.
 
-For the one-dimensional Burgers' equation,
+## Repository map
 
-$$
-\frac{\partial u}{\partial t}
-+u\frac{\partial u}{\partial x}
-=\nu\frac{\partial^2u}{\partial x^2}
-$$
+| Path | Purpose |
+|---|---|
+| `src/qcfd/burgers.py` | Grid, finite-difference matrices, time-step selection, and classical reference solver. |
+| `src/qcfd/block_encoding.py` | Dense unitary dilation used to block-encode a matrix. |
+| `src/qcfd/circuit_vqa.py` | LCU normalization and fidelity expressions, plus conditional-Z probability processing. |
+| `src/qcfd/tensor_network.py` | Circuit-to-TT conversion, diagonal TT operator construction, gauge selection, and local unitary dilations. |
+| `experiments/run_simulation.py` | Dense-field VQA simulation and classical comparison. |
+| `experiments/run_simulation_tn.py` | Tensor-network-field VQA simulation and classical comparison. |
+| `tests/` | Tests for the finite-difference setup, dense block encoding, TT state representation, and compiled diagonal operator. |
+| `notebooks/` | Exploratory notebooks for the model and its encodings. |
+| `results/figures/` | Example comparison plots produced by the scripts. |
 
-the nonlinear convection term is
+## 1. From Burgers equation to a discrete update
 
-$$
-u\frac{\partial u}{\partial x}.
-$$
-
-A state-based implementation of nonlinear multiplication can suffer from low success probabilities as the grid size increases. Low success probability can require more measurement shots to obtain reliable results, increasing the computational cost.
-
-### Our Approach: Tensor Trains and Diagonal Block Encoding
-
-Instead of representing nonlinear multiplication only through state-based operations, we investigate representing the velocity field as a diagonal operator:
-
-$$
-D_u = \mathrm{diag}(u_0, u_1, \ldots, u_{N-1})
-$$
-
-The nonlinear term can then be written as
-
-$$
-D_uD_xu,
-$$
-
-where $D_x$ is the discrete spatial derivative operator.
-
-A normalized diagonal block encoding represents
+The continuous equation is
 
 $$
-\langle 0|_{\mathrm{anc}}U_u|0\rangle_{\mathrm{anc}}
-=\frac{D_u}{\beta_u},
+\frac{\partial u}{\partial t} + u\frac{\partial u}{\partial x}
+= \nu\frac{\partial^2 u}{\partial x^2},
 $$
 
-where
+where `u(x,t)` is the velocity field and `ν` is the kinematic viscosity. Rearranging gives an evolution equation:
 
 $$
-\beta_u=\|D_u\|=\max_i|u_i|.
+u_t = \nu u_{xx} - u u_x.
 $$
 
-The important motivation is that this normalization depends on the maximum field magnitude rather than the field's vector $L_2$ norm, which typically grows with grid size for a field of comparable magnitude at each grid point.
-
-For a uniform field, the research approach reports a success probability of $1$ for diagonal block encoding, compared with $1/N$ for state-based multiplication. For more general fields, the success probability depends on the field and the input state; grid-size-independent performance is not guaranteed for every problem.
-
-Tensor-train representations provide a possible way to construct and compile these diagonal operators without explicitly storing every entry of a large dense matrix.
-
-### Why This Matters
-
-The project investigates whether this approach can:
-
-- Avoid the particular success-probability scaling bottleneck associated with state-based nonlinear multiplication.
-- Represent numerical fields and operators using tensor-train structures.
-- Reduce the overhead associated with representing nonlinear operations.
-- Validate quantum block encoding against classical numerical calculations.
-- Measure the trade-offs between approximation accuracy, success probability, and circuit resources.
-
-The goal is to test these ideas experimentally rather than assume that quantum computing automatically provides a speedup.
-
-**Note: The tensor-network-based approach to mitigating grid-size-dependent success-probability scaling in quantum algorithms for nonlinear PDEs has been investigated in published research. We use these studies as the theoretical foundation for our project and aim to independently implement and validate the relevant techniques using Qiskit. Our focus is on diagonal block encoding, tensor-train representations, and evaluating how success probability behaves as the grid size increases. The results of our implementation will be reported separately from those established in the referenced papers.**
-
-## 1. Overview
-
-The Burgers' equation is a fundamental nonlinear partial differential equation used to study fluid flow, convection, diffusion, and nonlinear wave phenomena.
-
-This project explores a hybrid quantum-classical approach to solving the one-dimensional viscous Burgers' equation. The implementation begins with a classical finite-difference solver and progressively investigates tensor-train (TT) representations, nonlinear operator construction, and quantum block encoding.
-
-The objective for the upcoming hackathon rounds is to understand how structured tensor representations and quantum algorithms can be combined to represent and process operators arising in nonlinear PDEs.
-
-This repository is being developed as a prototype. Classical numerical results serve as a reference for evaluating the accuracy and feasibility of the tensor and quantum components.
-
-## 2. Problem Statement
-
-We consider the one-dimensional viscous Burgers' equation:
+The code places `N` equally spaced points on `[0, L_dom]`, with `dx = L_dom/(N-1)`. For interior point `i`, it uses centered differences:
 
 $$
-\frac{\partial u}{\partial t}
-+u\frac{\partial u}{\partial x}
-=\nu\frac{\partial^2u}{\partial x^2}.
+(D_1u)_i = \frac{u_{i+1}-u_{i-1}}{2\,dx}, \qquad
+(D_2u)_i = \frac{u_{i-1}-2u_i+u_{i+1}}{dx^2}.
 $$
 
-Here:
+Thus `D1` approximates the first spatial derivative and `D2` approximates the second. Their boundary rows are zero; after each time step the endpoints are explicitly reset to zero, implementing homogeneous Dirichlet boundary conditions.
 
-- $u(x,t)$ is the velocity field.
-- $t$ is time.
-- $x$ is the spatial coordinate.
-- $\nu$ is the kinematic viscosity.
-
-The initial and boundary conditions are
-
-$$
-u(x,0)=\sin(\pi x),\qquad 0\leq x\leq 1,
-$$
-
-$$
-u(0,t)=u(1,t)=0.
-$$
-
-For the initial numerical experiments:
-
-- Domain length: $L=1$
-- Kinematic viscosity: $\nu=0.1$
-- Number of spatial grid points: $N=8$
-- Time integration: Forward Euler
-- Spatial discretization: Finite differences
-
-These parameters provide a small test case for validating the numerical formulation and exploring its tensor and quantum representations.
-
-## 3. Project Objectives
-
-- Implement a classical finite-difference solver for the Burgers' equation.
-- Construct the discrete first- and second-derivative operators.
-- Represent the nonlinear convection term using a field-dependent diagonal operator.
-- Investigate tensor-train decomposition and reconstruction of the numerical solution.
-- Study reconstruction errors as a function of tensor-train bond dimension.
-- Explore quantum state preparation and block encoding of normalized operators using Qiskit.
-- Investigate how linear and nonlinear operator branches could be combined using linear combinations of unitaries (LCU).
-- Compare quantum-component simulations with classical numerical references.
-
-## 4. Methodology
-
-### Stage 1: Classical Numerical Solver
-
-The spatial derivatives are approximated using finite differences, and the solution is advanced in time using the forward Euler method.
-
-The discrete update is
+Forward Euler with time step `dt` gives
 
 $$
 \begin{aligned}
-u_i^{j+1}
-={}&u_i^j
--\frac{\Delta t}{2\Delta x}u_i^j
-\left(u_{i+1}^j-u_{i-1}^j\right)\\
-&+\frac{\nu\Delta t}{\Delta x^2}
-\left(u_{i+1}^j-2u_i^j+u_{i-1}^j\right).
+u^{j+1}
+&= u^j + dt\left(\nu D_2u^j - u^j\odot(D_1u^j)\right) \\
+&= \left(I+dt\,\nu D_2 - dt\,\mathrm{diag}(u^j)D_1\right)u^j.
 \end{aligned}
 $$
 
-The boundary values are fixed at zero. The resulting solution is used as the classical reference.
+Here `⊙` is pointwise multiplication. The implemented nonlinear discretization is specifically `u * (D1 @ u)`, or `diag(u) D1 u`; it is not the alternative conservative discretization `D1 (u²/2)`.
 
-### Stage 2: Tensor-Train Representation
+`setup_classical_burgers` initializes `u(x,0)=sin(πx)`, fixes the endpoints to zero, and chooses a conservative step-size heuristic from the diffusion and advection scales. It rounds the number of steps up to a multiple of four so that the plotting times at 25%, 50%, 75%, and 100% of `T` land on time steps.
 
-The numerical solution is reshaped into a multidimensional tensor and approximated using a tensor-train representation.
+## 2. Splitting the discrete operator into terms
 
-The reconstruction error is evaluated using the relative $L_2$ error:
-
-$$
-\epsilon_{L_2}
-=\frac{\|u-\tilde{u}\|_2}{\|u\|_2},
-$$
-
-where $u$ is the original numerical solution and $\tilde{u}$ is its tensor-train reconstruction.
-
-Different bond dimensions are investigated to understand the trade-off between representation size and accuracy.
-
-### Stage 3: Nonlinear Operator Construction
-
-The diagonal matrix associated with the velocity field is defined as
+The quantum step keeps a scalar amplitude separately from a normalized state:
 
 $$
-D_u=\mathrm{diag}(u_0,u_1,\ldots,u_{N-1}).
+u^j = r_j\,|\psi_j\rangle, \qquad \lVert\psi_j\rVert_2=1.
 $$
 
-The discrete nonlinear term can then be written as
+In the code, `norm_cur` is `r_j` and `ansatz_state(theta_cur)` is the real state vector `ψ_j`. Define the following `N × N` operators:
+
+| Code name | Definition | Role |
+|---|---|---|
+| `D1` | Centered first-derivative matrix | Approximates `∂/∂x`. |
+| `D2` | Centered second-derivative matrix | Approximates `∂²/∂x²`. |
+| `O_L` | `I + dt * nu * D2` | Identity plus the explicit diffusion update. |
+| `O_C` | `-dt * D1` | Convection derivative and time-step factor. |
+| `diag(psi_j)` | Diagonal matrix whose entries are the state amplitudes | Supplies the current field shape to the nonlinear term. |
+| `O_full_j` | `O_L + norm_cur * diag(psi_j) @ O_C` | Full one-step map for the current field. |
+
+Since `diag(u^j) = r_j diag(ψ_j)`, the discrete update is
 
 $$
-D_uD_xu,
+\boxed{
+O_{\mathrm{full},j}
+= O_L + r_j\,\mathrm{diag}(\psi_j)O_C
+= I + dt\,\nu D_2 - dt\,r_j\mathrm{diag}(\psi_j)D_1
+}
 $$
 
-where $D_x$ is the discrete first-derivative matrix.
-
-This representation provides a starting point for investigating how a time-dependent nonlinear operator can be represented using tensor trains.
-
-### Stage 4: Quantum State Preparation and Block Encoding
-
-The normalized numerical solution is represented as an amplitude-encoded quantum state:
+and
 
 $$
-|\psi\rangle=\frac{\mathbf{u}}{\|\mathbf{u}\|_2}.
+u^{j+1} = r_j O_{\mathrm{full},j}\psi_j.
 $$
 
-For $N=8$, three system qubits are sufficient to encode the eight grid values as amplitudes.
+The operator order matters: `O_C` acts first, then the diagonal field operator acts on its result. Therefore the nonlinear map is `diag(ψ_j) @ O_C`, matching `diag(ψ_j) @ D1` in `O_full_j`.
 
-The quantum prototype investigates block encoding, in which a normalized operator appears as a block of a larger unitary:
+The exact normalized target direction and its norm would be
 
 $$
-\langle 0|_{\mathrm{anc}}U_A|0\rangle_{\mathrm{anc}}
-=\frac{A}{\beta_A}.
+|\psi_{j+1}^{\mathrm{exact}}\rangle
+= \frac{O_{\mathrm{full},j}|\psi_j\rangle}
+        {\lVert O_{\mathrm{full},j}|\psi_j\rangle\rVert_2},
+\qquad
+r_{j+1}^{\mathrm{exact}}
+= r_j\lVert O_{\mathrm{full},j}|\psi_j\rangle\rVert_2.
 $$
 
-Here, $A$ is the operator being represented and $\beta_A$ is a normalization factor.
+The algorithm approximates the direction with a parameterized circuit and estimates the norm through the comparison angle described below.
 
-The small-system implementation is intended to validate the mathematical construction and quantum-circuit simulation before investigating more structured tensor-based compilation.
+## 3. What block encoding means here
 
-### Stage 5: Hybrid Quantum-Classical Evolution (**In progress**)
+A quantum gate must be unitary, while the finite-difference matrices and diagonal field map generally are not. The code turns a matrix `M` into the top-left block of a larger unitary. It chooses
 
-The broader approach investigates how the linear diffusion operator and nonlinear convection operator can be combined to approximate a time-evolution step.
+$$
+c = (1+10^{-6})\lVert M\rVert_2, \qquad A=M/c,
+$$
 
-A central challenge is representing the field-dependent nonlinear operator efficiently as the solution changes with time.
+so `A` is a contraction. With `I` the identity of the same size, the unitary dilation is
 
-The eventual objective is to investigate a pipeline connecting classical numerical solutions, tensor-train representations, operator construction, quantum circuits, and classical optimization.
+$$
+U_M =
+\begin{bmatrix}
+A & \sqrt{I-AA^\dagger}\\
+\sqrt{I-A^\dagger A} & -A^\dagger
+\end{bmatrix}.
+$$
 
-## 5. Project Workflow
+The square roots are positive-semidefinite matrix square roots. The implementation symmetrizes the matrices before an eigendecomposition and clips tiny negative eigenvalues caused by floating-point error. The resulting unitary obeys
 
-The project follows a six-stage workflow, progressing from classical numerical simulation to quantum-circuit validation.
+$$
+(\langle 0|\otimes I)U_M(|0\rangle\otimes I)=M/c.
+$$
 
-```mermaid
-flowchart TD
-    A["1. Burgers' Equation<br/>Nonlinear PDE"]
-    B["2. Classical Finite-Difference Solver<br/>Numerical reference solution"]
-    C["3. Tensor-Train Decomposition<br/>Compression and reconstruction"]
-    D["4. Nonlinear Operator Construction<br/>Diagonal field operator and derivative"]
-    E["5. Quantum Block Encoding<br/>Qiskit circuit simulation"]
-    F["6. Classical vs Quantum Validation<br/>Accuracy, success probability, and circuit resources"]
+In this notation, the leading ancilla state `|0⟩` selects the top-left block. Postselecting that ancilla back to zero exposes the desired, scaled operation. The returned scale `c` must be carried along; omitting it would give the wrong physical update amplitude.
 
-    A --> B
-    B --> C
-    C --> D
-    D --> E
-    E --> F
-```
+The dense run constructs block encodings for `O_L`, `O_C`, and `diag(ψ_j)`. `A1` is the block-encoding ancilla for the derivative/diffusion operators, while `A2` is the field block-encoding ancilla.
 
-The workflow represents the planned implementation. Tensor-train-based circuit compilation and complete hybrid time evolution remain future milestones until implemented and validated.
+## 4. Combining the two terms with LCU
 
-## 6. Repository Structure
+The full map is a sum of a diffusion/identity term and a nonlinear term:
 
-```text
-hybrid-tensor-network-qcfd/
-├── README.md
-├── requirements.txt
-├── notebooks/
-│   ├── 01_burgers_classical.ipynb
-│   ├── 02_tensor_train.ipynb
-│   ├── 03_nonlinear_operator.ipynb
-│   └── 04_qiskit_block_encoding.ipynb
-└── results/
-    ├── figures/
-    └── data/
+$$
+O_{\mathrm{full},j} = O_L + r_j D(\psi_j)O_C,
+\qquad D(\psi_j)=\mathrm{diag}(\psi_j).
+$$
 
-```
+The block-encoded pieces have top-left blocks
 
+$$
+U_L\rightsquigarrow O_L/c_L,\qquad
+U_C\rightsquigarrow O_C/c_C,\qquad
+U_D\rightsquigarrow D(\psi_j)/c_D.
+$$
 
-## 7. Getting Started
+Applying `U_C` and then `U_D` gives the nonlinear product `D(ψ_j) O_C`, with combined scale `c_C c_D`. The positive LCU weights used by the scripts are
 
-### Prerequisites
+$$
+\beta_1=c_L,\qquad
+\beta_2=r_jc_Cc_D,\qquad
+\beta_{\mathrm{full}}=\beta_1+\beta_2.
+$$
 
-- Python 3.10 or a compatible Python version
-- Jupyter Notebook or JupyterLab
-- NumPy
-- Matplotlib
-- SciPy
-- Qiskit
+`C` is the LCU/control qubit and `Lq` is the term selector. The circuit applies `CRY(ω)` and later `CRY(-ω)`, where
 
-### Installation
+$$
+\omega=2\arccos\sqrt{\frac{\beta_2}{\beta_{\mathrm{full}}}}.
+$$
 
-Clone the repository:
+This gives `cos²(ω/2)=β₂/β_full` and `sin²(ω/2)=β₁/β_full`. In the active `C=1` branch, the `Lq=0` path applies the nonlinear product and the `Lq=1` path applies `O_L`; reversing the rotation recombines them with the required weights. After projecting the block-encoding ancillas and `Lq` to zero, the data amplitudes in the active branch are
+
+$$
+\frac{1}{\sqrt{2}}\frac{O_{\mathrm{full},j}|\psi_j\rangle}
+{\beta_{\mathrm{full}}}.
+$$
+
+The factor `1/√2` comes from the initial Hadamard on `C`. The other half is a reference branch with `C=0` and data still in `|0…0⟩`; this reference lets the next circuit compare the update against a candidate state. In `build_prefix`, `U(θ_j)` is controlled by `C`, `U_L` is selected by `C=1,Lq=1`, and the nonlinear block encodings are selected by `C=1,Lq=0`.
+
+## 5. Variational state preparation and the conditional-Z objective
+
+The ansatz uses `n_data = log2(N)` data qubits. Each layer applies an `RY(θ)` rotation to every data qubit, followed (except after the final rotation layer) by nearest-neighbor `CX` gates in a chain. All operations are real, matching the real-valued Burgers field.
+
+The single-qubit rotation is
+
+$$
+RY(\theta)=
+\begin{bmatrix}
+\cos(\theta/2)&-\sin(\theta/2)\\
+\sin(\theta/2)&\cos(\theta/2)
+\end{bmatrix}.
+$$
+
+`CX` is the controlled-NOT: it flips the target bit when its control bit is `1`, entangling neighboring data qubits. In the TT path, each `CX` is applied to the corresponding adjacent cores and followed by an SVD split; the SVD is a classical tensor-factorization step, not an extra quantum gate.
+
+Before time stepping, SciPy fits the initial state to the normalized sampled sine profile by minimizing
+
+$$
+1-\langle u^0/\lVert u^0\rVert,\psi(\theta)\rangle.
+$$
+
+For each subsequent step, the candidate state is `|ψ(θ_{j+1})⟩`. The suffix circuit applies its inverse, controlled by `C`, and then applies `RY(-φ)` to `C`. If the candidate matches the normalized update, the active branch is rotated into the reference branch. Optimizing the conditional expectation of Pauli `Z` on `C` rewards that match.
+
+Let
+
+$$
+a=\frac{\lVert O_{\mathrm{full},j}|\psi_j\rangle\rVert_2^2}
+        {\beta_{\mathrm{full}}^2},
+\qquad
+f=\left\langle\psi(\theta_{j+1})\middle|
+\frac{O_{\mathrm{full},j}|\psi_j\rangle}
+     {\lVert O_{\mathrm{full},j}|\psi_j\rangle\rVert_2}
+\right\rangle.
+$$
+
+For real states, `f` is real. After postselection of the LCU and block-encoding ancillas, the conditional control expectation is
+
+$$
+\langle Z_C\rangle_{\mathrm{cond}}
+=\frac{(1-a)\cos\phi+2\sqrt{a}\,f\sin\phi}{1+a}.
+$$
+
+Solving for the squared overlap gives the expression named `fidelity_eq4` in `src/qcfd/circuit_vqa.py`:
+
+$$
+\boxed{
+F=|f|^2
+=\frac{\left[a(\langle Z_C\rangle_{\mathrm{cond}}+\cos\phi)
++\langle Z_C\rangle_{\mathrm{cond}}-\cos\phi\right]^2}
+{4a\sin^2\phi}
+}
+$$
+
+The optimizer minimizes `1 - <Z_C>`. When `SHOTS=None`, the conditional expectation is calculated from exact statevector probabilities. With an integer `SHOTS`, the script samples that exact simulated distribution and computes a shot estimate; this is sampling noise simulation, not execution on a quantum device.
+
+### Fidelity and norm diagnostics in the scripts
+
+The formula above requires `a` to be the physical branch norm ratio. The scripts compute that value as `alpha_exact = ||O_full_j @ psi_j||² / beta_full²`. They also set `alpha = tan²(φ/2)` and pass this angle-derived value to `fidelity_eq4` and the norm recovery formula. These two values coincide in the ideal case where the learned comparison angle correctly represents the update norm. With an imperfect ansatz fit or imperfect optimization, they can differ. Compare `alpha` with `alpha_exact`, and `F_eq4` with `F_true` (the latter is computed directly from simulator-only access to the exact update) when evaluating a run. On hardware, the exact diagnostics would not be directly available.
+
+The code's normalization function is
+
+$$
+g(a,\phi)=
+\frac{1+a}{2\sin\phi-(\sqrt a-1/\sqrt a)\cos\phi}.
+$$
+
+With `a=tan²(φ/2)` and the intended principal range `0<φ<π`, this simplifies to `g=tan(φ/2)`. The script therefore updates the unnormalized field amplitude as
+
+$$
+r_{j+1}=\beta_{\mathrm{full}}g(a,\phi)r_j
+=\beta_{\mathrm{full}}\tan(\phi/2)r_j.
+$$
+
+In the ideal case `tan(φ/2)=sqrt(a)`, so this recovers `r_j ||O_full,j ψ_j||₂`, the norm of the unnormalized Euler update. The learned angle is the estimate used by the simulation.
+
+The main circuit operators are:
+
+| Operator | Where it appears | What it does |
+|---|---|---|
+| `H` | Prefix on `C` | Creates an equal-weight reference branch (`C=0`) and active update branch (`C=1`). |
+| `RY(θ)` | Data ansatz | Sets real amplitudes through trainable half-angle rotations. |
+| `CX` | Data ansatz | Adds nearest-neighbor entanglement; it is also the two-qubit gate represented by `apply_cx` in the TT routine. |
+| `CRY(ω)` and `CRY(-ω)` | Prefix around the term operators | Prepare and then recombine the LCU selector amplitudes. |
+| `U_L`, `U_C`, `U_D` | Controlled prefix gates | Unitary dilations whose top-left blocks implement the scaled PDE operators. In the TT run, local dilations replace the dense `U_D`. |
+| Controlled `U(θ)` | Prefix | Loads the current normalized field only in the active branch. |
+| Controlled `U†(θ_{j+1})` | Suffix | Tests the candidate next state against the active update branch by unpreparing that candidate. |
+| `RY(-φ)` | Suffix on `C` | Tunes the reference/update interference and carries the norm estimate. |
+| Pauli `Z = diag(1,-1)` | Readout on `C` | Distinguishes the reference (`C=0`) from the residual update (`C=1`) after postselection. |
+
+## 6. Dense versus tensor-network field encoding
+
+### Dense diagonal encoding
+
+The dense implementation constructs `D(ψ_j)=diag(ψ_j)` as an `N × N` matrix and block-encodes it as one unitary on the data plus one ancilla. This is direct and convenient for small grids, but stores dense matrices and requires matrix eigendecompositions.
+
+### Tensor-train encoding
+
+The TT implementation writes the circuit state's amplitudes as a contraction of local cores:
+
+$$
+\psi_{i_0i_1\dots i_{n-1}}
+=\sum_{a_1,\dots,a_{n-1}}
+G^{[0]}_{1,i_0,a_1}G^{[1]}_{a_1,i_1,a_2}\cdots
+G^{[n-1]}_{a_{n-1},i_{n-1},1}.
+$$
+
+Each core has shape `(left_bond, 2, right_bond)`. `circuit_to_tt` contracts the `RY` and `CX` circuit operations into the train and uses SVDs to split neighboring sites. `chi_max` caps the bond dimension; reducing it truncates singular values and approximates the state. `tt_error` in the experiment reports the maximum amplitude difference between the TT reconstruction and the ansatz state. With no truncation, the test suite checks that the TT reconstructs the circuit state.
+
+The diagonal operator is represented by cores `W` with only equal input and output physical indices populated:
+
+$$
+W^{[k]}_{a,i,i,b}=G^{[k]}_{a,i,b},\qquad
+W^{[k]}_{a,i,o,b}=0\quad(i\ne o).
+$$
+
+Contracting these cores yields the diagonal entries `ψ_i`. For each site, the compiler forms two local bond matrices, one for physical bit `i=0` and one for `i=1`. Each is divided by a site scale
+
+$$
+c_k=(1+10^{-6})\max_{i\in\{0,1\}}
+\left\lVert W^{[k]}_{:,i,i,:}\right\rVert_2,
+\qquad c_D=\prod_k c_k,
+$$
+
+then embedded as a top-left block of a unitary dilation. The gates are controlled by the LCU branch and the corresponding data bit. `A2` holds the bond-index register plus one dilation ancilla per data site; postselecting these qubits at zero exposes the contracted diagonal amplitude. `choose_gauge` tries different canonical TT centers and keeps the gauge with the smallest product of site scales, reducing the overall block-encoding normalization without changing the represented tensor.
+
+Qiskit's statevector basis is little-endian. The TT conversion reverses physical axes when flattening (`tt_to_vector`) so its vector ordering matches the circuit statevector and the grid-vector convention used by the finite-difference matrices.
+
+The default `CHI_MAX=None` in the TN script selects `2**(n_data//2)`, enough for the maximum bond rank of the small even-qubit examples. Setting a smaller `CHI_MAX` lowers the bond-register size and introduces TT approximation error. `n_bond` is the number of qubits needed to hold the selected maximum bond dimension.
+
+## Setup and run
+
+Use Python with the packages in `requirements.txt` (NumPy, SciPy, Matplotlib, Jupyter, Qiskit, and Qiskit Aer):
 
 ```bash
-git clone https://github.com/sukesh-0819/hybrid-tensor-network-qcfd.git
-cd hybrid-tensor-network-qcfd
+python -m pip install -r requirements.txt
 ```
 
-Install the dependencies:
+From the project root, run either implementation:
 
 ```bash
-pip install -r requirements.txt
+python experiments/run_simulation.py
+python experiments/run_simulation_tn.py
 ```
 
-Launch Jupyter Notebook:
+The example settings are at the top of each script rather than exposed as command-line arguments. Both runs fit the initial state, simulate every time step, print the conditional `⟨Z⟩`, inferred `alpha`, and relative L2 error against the classical solution, then save a comparison plot.
+
+| Script | Default grid | Data qubits | Total simulated qubits | Output figure |
+|---|---:|---:|---:|---|
+| `run_simulation.py` | `N=8` | 3 | 7 (`C`, `Lq`, data, `A1`, `A2`) | `results/figures/burgers_compare_times.png` |
+| `run_simulation_tn.py` | `N=16` | 4 | 13 with default bond settings | `results/figures/burgers_compare_times_tn.png` |
+
+To change grid size, viscosity, final time, shot count, or TT rank, edit the `N`, `nu`, `L_dom`, `T`, `SHOTS`, or `CHI_MAX` settings near the top of the relevant experiment script. `N` must be a power of two because the grid is stored in `log2(N)` data qubits. The output paths are relative to the current working directory, so launch from the project root to place figures in `results/figures/`.
+
+## Example output
+
+The repository includes example four-time comparisons. Blue curves are the classical finite-difference reference; red dashed curves are the variational quantum simulation.
+
+### Dense field encoding
+
+![Dense VQA versus classical Burgers solution at four times](results/figures/burgers_compare_times.png)
+
+### Tensor-network field encoding
+
+![Tensor-network VQA versus classical Burgers solution at four times](results/figures/burgers_compare_times_tn.png)
+
+## Scope and limitations
+
+- The time integrator is explicit forward Euler with centered finite differences. Its accuracy and stability are limited by the grid and chosen `dt`.
+- The ansatz and initial-state fit are classical variational optimization around statevector simulation. Runtime includes dense statevector evolution and does not imply a hardware resource advantage.
+- Dense block encodings scale poorly as `N` grows. The TT implementation factorizes the field operator, but the experiment still uses a full `Statevector` for circuit probabilities and optimization.
+- Finite-shot mode samples simulator probabilities. It does not include hardware noise, gate synthesis cost, connectivity constraints, or measurement calibration.
+- `F_true`, `alpha_exact`, and the classical error are available because this is a simulator study. They are reference diagnostics, not quantities assumed to be available from the quantum circuit alone.2}
+        {\beta_{\mathrm{full}}^2},
+\qquad
+f=\left\langle\psi(\theta_{j+1})\middle|
+\frac{O_{\mathrm{full},j}|\psi_j\rangle}
+     {\lVert O_{\mathrm{full},j}|\psi_j\rangle\rVert_2}
+\right\rangle.
+$$
+
+For real states, `f` is real. After postselection of the LCU and block-encoding ancillas, the conditional control expectation is
+
+$$
+\langle Z_C\rangle_{\mathrm{cond}}
+=\frac{(1-a)\cos\phi+2\sqrt{a}\,f\sin\phi}{1+a}.
+$$
+
+Solving for the squared overlap gives the expression named `fidelity_eq4` in `src/qcfd/circuit_vqa.py`:
+
+$$
+\boxed{
+F=|f|^2
+=\frac{\left[a(\langle Z_C\rangle_{\mathrm{cond}}+\cos\phi)
++\langle Z_C\rangle_{\mathrm{cond}}-\cos\phi\right]^2}
+{4a\sin^2\phi}
+}
+$$
+
+The optimizer minimizes `1 - <Z_C>`. When `SHOTS=None`, the conditional expectation is calculated from exact statevector probabilities. With an integer `SHOTS`, the script samples that exact simulated distribution and computes a shot estimate; this is sampling noise simulation, not execution on a quantum device.
+
+### Fidelity and norm diagnostics in the scripts
+
+The formula above requires `a` to be the physical branch norm ratio. The scripts compute that value as `alpha_exact = ||O_full_j @ psi_j||² / beta_full²`. They also set `alpha = tan²(φ/2)` and pass this angle-derived value to `fidelity_eq4` and the norm recovery formula. These two values coincide in the ideal case where the learned comparison angle correctly represents the update norm. With an imperfect ansatz fit or imperfect optimization, they can differ. Compare `alpha` with `alpha_exact`, and `F_eq4` with `F_true` (the latter is computed directly from simulator-only access to the exact update) when evaluating a run. On hardware, the exact diagnostics would not be directly available.
+
+The code's normalization function is
+
+$$
+g(a,\phi)=
+\frac{1+a}{2\sin\phi-(\sqrt a-1/\sqrt a)\cos\phi}.
+$$
+
+With `a=tan²(φ/2)` and the intended principal range `0<φ<π`, this simplifies to `g=tan(φ/2)`. The script therefore updates the unnormalized field amplitude as
+
+$$
+r_{j+1}=\beta_{\mathrm{full}}g(a,\phi)r_j
+=\beta_{\mathrm{full}}\tan(\phi/2)r_j.
+$$
+
+In the ideal case `tan(φ/2)=sqrt(a)`, so this recovers `r_j ||O_full,j ψ_j||₂`, the norm of the unnormalized Euler update. The learned angle is the estimate used by the simulation.
+
+The main circuit operators are:
+
+| Operator | Where it appears | What it does |
+|---|---|---|
+| `H` | Prefix on `C` | Creates an equal-weight reference branch (`C=0`) and active update branch (`C=1`). |
+| `RY(θ)` | Data ansatz | Sets real amplitudes through trainable half-angle rotations. |
+| `CX` | Data ansatz | Adds nearest-neighbor entanglement; it is also the two-qubit gate represented by `apply_cx` in the TT routine. |
+| `CRY(ω)` and `CRY(-ω)` | Prefix around the term operators | Prepare and then recombine the LCU selector amplitudes. |
+| `U_L`, `U_C`, `U_D` | Controlled prefix gates | Unitary dilations whose top-left blocks implement the scaled PDE operators. In the TT run, local dilations replace the dense `U_D`. |
+| Controlled `U(θ)` | Prefix | Loads the current normalized field only in the active branch. |
+| Controlled `U†(θ_{j+1})` | Suffix | Tests the candidate next state against the active update branch by unpreparing that candidate. |
+| `RY(-φ)` | Suffix on `C` | Tunes the reference/update interference and carries the norm estimate. |
+| Pauli `Z = diag(1,-1)` | Readout on `C` | Distinguishes the reference (`C=0`) from the residual update (`C=1`) after postselection. |
+
+## 6. Dense versus tensor-network field encoding
+
+### Dense diagonal encoding
+
+The dense implementation constructs `D(ψ_j)=diag(ψ_j)` as an `N × N` matrix and block-encodes it as one unitary on the data plus one ancilla. This is direct and convenient for small grids, but stores dense matrices and requires matrix eigendecompositions.
+
+### Tensor-train encoding
+
+The TT implementation writes the circuit state's amplitudes as a contraction of local cores:
+
+$$
+\psi_{i_0i_1\dots i_{n-1}}
+=\sum_{a_1,\dots,a_{n-1}}
+G^{[0]}_{1,i_0,a_1}G^{[1]}_{a_1,i_1,a_2}\cdots
+G^{[n-1]}_{a_{n-1},i_{n-1},1}.
+$$
+
+Each core has shape `(left_bond, 2, right_bond)`. `circuit_to_tt` contracts the `RY` and `CX` circuit operations into the train and uses SVDs to split neighboring sites. `chi_max` caps the bond dimension; reducing it truncates singular values and approximates the state. `tt_error` in the experiment reports the maximum amplitude difference between the TT reconstruction and the ansatz state. With no truncation, the test suite checks that the TT reconstructs the circuit state.
+
+The diagonal operator is represented by cores `W` with only equal input and output physical indices populated:
+
+$$
+W^{[k]}_{a,i,i,b}=G^{[k]}_{a,i,b},\qquad
+W^{[k]}_{a,i,o,b}=0\quad(i\ne o).
+$$
+
+Contracting these cores yields the diagonal entries `ψ_i`. For each site, the compiler forms two local bond matrices, one for physical bit `i=0` and one for `i=1`. Each is divided by a site scale
+
+$$
+c_k=(1+10^{-6})\max_{i\in\{0,1\}}
+\left\lVert W^{[k]}_{:,i,i,:}\right\rVert_2,
+\qquad c_D=\prod_k c_k,
+$$
+
+then embedded as a top-left block of a unitary dilation. The gates are controlled by the LCU branch and the corresponding data bit. `A2` holds the bond-index register plus one dilation ancilla per data site; postselecting these qubits at zero exposes the contracted diagonal amplitude. `choose_gauge` tries different canonical TT centers and keeps the gauge with the smallest product of site scales, reducing the overall block-encoding normalization without changing the represented tensor.
+
+Qiskit's statevector basis is little-endian. The TT conversion reverses physical axes when flattening (`tt_to_vector`) so its vector ordering matches the circuit statevector and the grid-vector convention used by the finite-difference matrices.
+
+The default `CHI_MAX=None` in the TN script selects `2**(n_data//2)`, enough for the maximum bond rank of the small even-qubit examples. Setting a smaller `CHI_MAX` lowers the bond-register size and introduces TT approximation error. `n_bond` is the number of qubits needed to hold the selected maximum bond dimension.
+
+## Setup and run
+
+Use Python with the packages in `requirements.txt` (NumPy, SciPy, Matplotlib, Jupyter, Qiskit, and Qiskit Aer):
 
 ```bash
-jupyter notebook
+python -m pip install -r requirements.txt
 ```
 
-**Run the notebooks in numerical order**, starting with the classical solver.
+From the project root, run either implementation:
 
-**Note:** Record and test dependency versions in `requirements.txt` before reproducing the experiments in a clean environment.
+```bash
+python experiments/run_simulation.py
+python experiments/run_simulation_tn.py
+```
 
-## 8. Experimental Evaluation
+The example settings are at the top of each script rather than exposed as command-line arguments. Both runs fit the initial state, simulate every time step, print the conditional `⟨Z⟩`, inferred `alpha`, and relative L2 error against the classical solution, then save a comparison plot.
 
-The project evaluates the following aspects:
+| Script | Default grid | Data qubits | Total simulated qubits | Output figure |
+|---|---:|---:|---:|---|
+| `run_simulation.py` | `N=8` | 3 | 7 (`C`, `Lq`, data, `A1`, `A2`) | `results/figures/burgers_compare_times.png` |
+| `run_simulation_tn.py` | `N=16` | 4 | 13 with default bond settings | `results/figures/burgers_compare_times_tn.png` |
 
-- Agreement between the direct finite-difference update and its matrix-operator formulation.
-- Accuracy of tensor-train reconstruction.
-- Dependence of reconstruction error on bond dimension.
-- Accuracy of the reconstructed nonlinear operator action.
-- Unitarity of constructed block-encoding circuits.
-- Agreement between the expected operator action and the simulated quantum output.
-- Success probabilities and circuit-resource requirements for the small-system prototype.
+To change grid size, viscosity, final time, shot count, or TT rank, edit the `N`, `nu`, `L_dom`, `T`, `SHOTS`, or `CHI_MAX` settings near the top of the relevant experiment script. `N` must be a power of two because the grid is stored in `log2(N)` data qubits. The output paths are relative to the current working directory, so launch from the project root to place figures in `results/figures/`.
 
-Results will be documented as the corresponding implementations are completed and validated.
+## Example output
 
-## 9. Current Scope and Limitations
+The repository includes example four-time comparisons. Blue curves are the classical finite-difference reference; red dashed curves are the variational quantum simulation.
 
-The initial experiments use a small spatial grid to validate the mathematical and computational workflow.
+### Dense field encoding
 
-An exact small-matrix unitary dilation is a useful block-encoding prototype, but it is not by itself an efficient, scalable quantum implementation. Likewise, representing an operator using a dense matrix does not demonstrate that its tensor-train representation has been compiled efficiently into a quantum circuit.
+![Dense VQA versus classical Burgers solution at four times](results/figures/burgers_compare_times.png)
 
-The project will distinguish between classical numerical validation, simulated quantum-circuit validation, and future work on structured tensor-based circuit construction.
+### Tensor-network field encoding
 
-No quantum speedup is assumed. Any performance advantage would require further analysis and comparison against appropriate classical baselines.
+![Tensor-network VQA versus classical Burgers solution at four times](results/figures/burgers_compare_times_tn.png)
 
-## 10. Future Work
+## Scope and limitations
 
-- Investigate tensor-train compression across multiple time steps.
-- Compare reconstruction accuracy for different bond dimensions.
-- Develop and validate structured quantum circuits for normalized operators.
-- Investigate LCU-based combination of the diffusion and convection terms.
-- Evaluate circuit depth, qubit requirements, and success probabilities.
-- Compare hybrid results with the classical reference solution.
-- Explore larger grids and more demanding numerical test cases.
-
-## 11. References
-
-1. A. Termanova, A. Melnikov, E. Mamenchikov, N. Belokonev, S. Dolgov, A. Berezutskii, R. Ellerbrock, C. Mansell, and M. R. Perelshtein, "Tensor Quantum Programming," *New Journal of Physics*, vol. 26, no. 12, article 123019, 2024.  
-   https://doi.org/10.1088/1367-2630/ad985b
-
-2. P. Siegl, N.-L. van Hülst, M. Mandelt Buxadé, T. Hashizume, and D. Jaksch, "Efficient Treatment of Non-Linearity in Quantum Computational Fluid Dynamics Using Hybrid Tensor Networks," arXiv:2608.24150, 2026.  
-   https://arxiv.org/abs/2608.24150
-
-3. S.-J. Ran, "Encoding of Matrix Product States into Quantum Circuits of One- and Two-Qubit Gates," *Physical Review A*, vol. 101, 032310, 2020.  
-   https://doi.org/10.1103/PhysRevA.101.032310
-
-## 12. Contributors
-
-- **Team:** QFluid
-- **Contributors:** Sukesh Nasina, Akshay MS, Nikhileswar Pakala
-- **Project track:** Open Quantum Innovation
-
----
-
-*This repository is an ongoing research and development project. The README will be updated as the implementation, experiments, and results mature.*
+- The time integrator is explicit forward Euler with centered finite differences. Its accuracy and stability are limited by the grid and chosen `dt`.
+- The ansatz and initial-state fit are classical variational optimization around statevector simulation. Runtime includes dense statevector evolution and does not imply a hardware resource advantage.
+- Dense block encodings scale poorly as `N` grows. The TT implementation factorizes the field operator, but the experiment still uses a full `Statevector` for circuit probabilities and optimization.
+- Finite-shot mode samples simulator probabilities. It does not include hardware noise, gate synthesis cost, connectivity constraints, or measurement calibration.
+- `F_true`, `alpha_exact`, and the classical error are available because this is a simulator study. They are reference diagnostics, not quantities assumed to be available from the quantum circuit alone.

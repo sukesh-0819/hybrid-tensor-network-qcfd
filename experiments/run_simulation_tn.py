@@ -16,7 +16,7 @@ from src.qcfd.circuit_vqa import normalization_factor, fidelity_eq4, z_from_prob
 from src.qcfd.tensor_network import circuit_to_tt, tn_compile, tt_to_vector
 
 # Parameters
-N, nu, L_dom, T, SHOTS = 16, 0.1, 1.0, 1.0, None
+N, nu, L_dom, T, SHOTS = 8, 0.1, 1.0, 1.0, None
 CHI_MAX = None
 x, dx, dt, n_steps, D1, D2, classical_solution = setup_classical_burgers(N, L_dom, nu, T)
 
