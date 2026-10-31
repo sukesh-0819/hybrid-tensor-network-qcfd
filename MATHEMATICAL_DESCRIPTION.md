@@ -10,21 +10,23 @@ $$
 \frac{\partial u}{\partial t}
 + u\frac{\partial u}{\partial x}
 = \nu\frac{\partial^2 u}{\partial x^2},
-\qquad 0 \le x \le L,
+\qquad 0 \le x \le L.
 $$
 
-with zero boundary values. The code initializes the grid using $u_i^0=\sin(\pi x_i)$, then fixes the two endpoints to zero. With the demo's L=1, this is the standard $\sin(\pi x/L)$ profile.
+with zero boundary values. The code initializes the grid using $u_i^0=\sin(\pi x_i)$, then fixes the two endpoints to zero. With the demo's $L=1$, this is the standard $\sin(\pi x/L)$ profile.
 
-The code uses N equally spaced grid points, viscosity $\nu$, and final time T. Its default demonstration uses N=8, L=1, $\nu=0.1$, and T=1. The objective is to advance a vector of grid values, not to solve a continuum equation exactly.
+The code uses $N$ equally spaced grid points, viscosity $\nu$, and final time $T$. Its default demonstration uses $N=8$, $L=1$, $\nu=0.1$, and $T=1$. The objective is to advance a vector of grid values, not to solve a continuum equation exactly.
 
-Let $u^j\in\mathbb{R}^N$ be the discrete field at time $t_j=j\Delta t$. The superscript j denotes a time index.
+Let $u^j\in\mathbb{R}^N$ be the discrete field at time $t_j=j\Delta t$. The superscript $j$ denotes a time index.
 
 ## 2. Finite-difference reference update
 
 The grid spacing is
 
 $$
-\Delta x = \frac{L}{N-1}, \qquad x_i=i\Delta x,\quad i=0,\dots,N-1.
+\Delta x = \frac{L}{N-1},
+\qquad
+x_i=i\Delta x,\quad i=0,\dots,N-1.
 $$
 
 At interior points, the centered first and second derivatives are
@@ -37,7 +39,7 @@ $$
 (D_2 u)_i = \frac{u_{i-1}-2u_i+u_{i+1}}{\Delta x^2}.
 $$
 
-The code stores these as N-by-N matrices. Boundary rows are zero and the two endpoint values are reset to zero after every step. A forward-Euler step gives
+The code stores these as $N$-by-$N$ matrices. Boundary rows are zero and the two endpoint values are reset to zero after every step. A forward-Euler step gives
 
 $$
 u^{j+1}
@@ -46,7 +48,7 @@ u^{j+1}
 \tag{1}
 $$
 
-Here $\mathrm{diag}(u)$ is a diagonal matrix whose diagonal entries are the values of u. It makes the nonlinear product $u\,u_x$ a matrix-vector product for a fixed current field.
+Here $\mathrm{diag}(u)$ is a diagonal matrix whose diagonal entries are the values of $u$. It makes the nonlinear product $u\,u_x$ a matrix-vector product for a fixed current field.
 
 The code chooses a conservative step size using
 
@@ -69,14 +71,14 @@ u^j=r_j\psi_j,\qquad
 \tag{2}
 $$
 
-The normalized vector $\psi_j$ is represented by amplitudes of n data qubits, where
+The normalized vector $\psi_j$ is represented by amplitudes of $n$ data qubits, where
 
 $$
 N=2^n,\qquad
 |\psi_j\rangle=\sum_{i=0}^{N-1}(\psi_j)_i |i\rangle.
 $$
 
-The scalar $r_j$ is tracked classically. With N=8, three data qubits provide eight basis states, one for each grid index. The grid value is an amplitude associated with a basis index; it is not stored in a separate qubit.
+The scalar $r_j$ is tracked classically. With $N=8$, three data qubits provide eight basis states, one for each grid index. The grid value is an amplitude associated with a basis index; it is not stored in a separate qubit.
 
 Substitute $u^j=r_j\psi_j$ into (1). Because the derivative is linear,
 
@@ -131,7 +133,7 @@ R_y(\theta)=
 \end{bmatrix}.
 $$
 
-The ansatz is real-valued because it uses only RY and CX gates. For N=8 the script chooses five entangling layers, with six rounds of RY rotations, giving 18 trainable angles and 10 CNOTs.
+The ansatz is real-valued because it uses only RY and CX gates. For $N=8$ the script chooses five entangling layers, with six rounds of RY rotations, giving 18 trainable angles and 10 CNOTs.
 
 Before time evolution, a classical optimizer finds angles whose circuit state matches the normalized initial vector. The cost is
 
@@ -145,13 +147,13 @@ At later steps, the same ansatz represents the candidate $\psi_{j+1}$. The class
 
 ## 5. Block encoding each matrix
 
-A block encoding puts a scaled matrix in one block of a larger unitary. For a matrix M, choose
+A block encoding puts a scaled matrix in one block of a larger unitary. For a matrix $M$, choose
 
 $$
 c_M=(1+10^{-6})\|M\|_2,\qquad A=M/c_M,
 $$
 
-so that A is a contraction. The code constructs the unitary dilation
+so that $A$ is a contraction. The code constructs the unitary dilation
 
 $$
 U_M=
@@ -219,7 +221,7 @@ $$
 
 This is why the nonlinear scale in (8) includes the current norm $r_j$. The selector weights compensate for the normalization inside each block encoding.
 
-The outer control qubit is put into a superposition by H. One branch is the reference $|0\rangle^{\otimes n}$; the other prepares $\psi_j$ and applies the selected update. After successful projection of the LCU and block-encoding flags, the updated branch contains
+The outer control qubit is put into a superposition by $H$. One branch is the reference $|0\rangle^{\otimes n}$; the other prepares $\psi_j$ and applies the selected update. After successful projection of the LCU and block-encoding flags, the updated branch contains
 
 $$
 \frac{1}{\sqrt{2}}\frac{M_j\psi_j}{\beta}.
@@ -240,7 +242,7 @@ $$
 \tag{12}
 $$
 
-A final $R_y(-\phi)$ on the outer control converts the reference/update amplitude balance into a control-qubit Z expectation. Probabilities are conditioned on the lcu, A1, and A2 flags all being zero. The optimizer minimizes
+A final $R_y(-\phi)$ on the outer control converts the reference/update amplitude balance into a control-qubit $Z$ expectation. Probabilities are conditioned on the lcu, A1, and A2 flags all being zero. The optimizer minimizes
 
 $$
 C(\theta',\phi)=1-\langle Z\rangle_{\mathrm{postselected}}.
@@ -249,14 +251,14 @@ $$
 
 Driving this cost toward zero aligns the candidate state with the normalized update while fitting $\phi$ to the update's magnitude. The exact statevector version evaluates these probabilities directly. If a finite shot count is supplied, the code samples basis outcomes instead.
 
-The code also computes a fidelity from the measured Z expectation $e_z$, $\alpha$, and $\phi$:
+The code also computes a fidelity from the measured $Z$ expectation $e_z$, $\alpha$, and $\phi$:
 
 $$
 F =
 \frac{\left[\alpha(e_z+\cos\phi)+e_z-\cos\phi\right]^2}
 {4\alpha\sin^2\phi},
 \qquad
-\alpha=\tan^2(\phi/2).
+\alpha=\tan^2(\phi/2),
 \tag{14}
 $$
 
@@ -303,7 +305,7 @@ which is exactly the magnitude relation in (5) when $\alpha$ matches (15). The f
 
 The dense version forms the full diagonal matrix $D_{\psi_j}$ and its unitary dilation. The tensor-network version replaces that matrix with a matrix-product-state/tensor-train representation of the same amplitude vector.
 
-A length-N state tensor is written as a chain of cores $G^{(k)}$:
+A length-$N$ state tensor is written as a chain of cores $G^{(k)}$:
 
 $$
 (\psi_j)_{i_0\ldots i_{n-1}}
@@ -316,27 +318,27 @@ G^{(n-1)}_{b_{n-2},i_{n-1},1}.
 \tag{18}
 $$
 
-The internal indices b are bond indices; their maximum size is the bond dimension $\chi$. The compiler creates cores from the RY/CX ansatz itself. After each CNOT, it reshapes a neighboring pair of cores, performs an SVD, and keeps at most $\chi_{\max}$ singular directions. If no truncation is needed, contracting the cores reproduces the ansatz state.
+The internal indices $b$ are bond indices; their maximum size is the bond dimension $\chi$. The compiler creates cores from the RY/CX ansatz itself. After each CNOT, it reshapes a neighboring pair of cores, performs an SVD, and keeps at most $\chi_{\max}$ singular directions. If no truncation is needed, contracting the cores reproduces the ansatz state.
 
-To encode the diagonal field, each core is converted to a diagonal operator core with physical input/output bits equal. For each site k and bit value i in {0,1}, this gives a local bond matrix $A^{(k,i)}$. A gauge choice redistributes scale along the chain; the code tries each possible canonical center and selects the gauge with the smallest product of local spectral-norm scales.
+To encode the diagonal field, each core is converted to a diagonal operator core with physical input/output bits equal. For each site $k$ and bit value $i\in\{0,1\}$, this gives a local bond matrix $A^{(k,i)}$. A gauge choice redistributes scale along the chain; the code tries each possible canonical center and selects the gauge with the smallest product of local spectral-norm scales.
 
-The bond register stores the internal index, and each site has a flag qubit for its local unitary dilation. The local unitary gate S{k}:{i} is enabled only on the nonlinear branch and when data qubit k equals i. Its target is the bond register plus that site's flag. The sequence of local gates implements the diagonal operator block through the tensor train. The total field scale is the product of the local scales.
+The bond register stores the internal index, and each site has a flag qubit for its local unitary dilation. The local unitary gate $S_{k:i}$ is enabled only on the nonlinear branch and when data qubit $k$ equals $i$. Its target is the bond register plus that site's flag. The sequence of local gates implements the diagonal operator block through the tensor train. The total field scale is the product of the local scales.
 
-For N=8, the default tensor-train bond dimension is two and one bond qubit is sufficient. The full tensor-network circuit has three data qubits, ctrl, lcu, A1, one bond qubit, and three site flags: 10 qubits total. The dense version has 7 total qubits, but stores a dense N-by-N field block. The tensor-network version uses more ancillas in this small example to express the field as local gates. Its potential benefit is structured representation at larger sizes; the saved demo alone does not establish a hardware advantage.
+For $N=8$, the default tensor-train bond dimension is two and one bond qubit is sufficient. The full tensor-network circuit has three data qubits, ctrl, lcu, A1, one bond qubit, and three site flags: 10 qubits total. The dense version has 7 total qubits, but stores a dense $N$-by-$N$ field block. The tensor-network version uses more ancillas in this small example to express the field as local gates. Its potential benefit is structured representation at larger sizes; the saved demo alone does not establish a hardware advantage.
 
 ## 10. Complete step and interpretation of the figures
 
-For each time step j, the scripts perform the following sequence:
+For each time step $j$, the scripts perform the following sequence:
 
 1. Read the current ansatz angles and classical norm $r_j$.
 2. Build the current field encoding: dense $U_{\phi,j}$, or tensor-train local gates.
 3. Compute the scales and selector angle $\omega$.
 4. Build the controlled update and overlap circuit.
-5. Optimize $\theta'$ and $\phi$ from the conditional Z objective.
+5. Optimize $\theta'$ and $\phi$ from the conditional $Z$ objective.
 6. Recover $r_{j+1}$, form $r_{j+1}\psi(\theta')$, and continue.
 
 The circuit figures show these blocks for a single step. The comparison figure shows the discrete classical reference and variational output at several times.
 
-For the supplied N=8 case, the dense comparison plot reports relative L2 errors from roughly $1.2\times10^{-7}$ to $8.0\times10^{-7}$; the tensor-network plot reports roughly $2.3\times10^{-7}$ to $3.4\times10^{-6}$. These are ideal statevector results with exact probabilities in the default configuration. They measure agreement with this small finite-difference reference and ansatz, not performance on noisy hardware or quantum speedup.
+For the supplied $N=8$ case, the dense comparison plot reports relative L2 errors from roughly $1.2\times10^{-7}$ to $8.0\times10^{-7}$; the tensor-network plot reports roughly $2.3\times10^{-7}$ to $3.4\times10^{-6}$. These are ideal statevector results with exact probabilities in the default configuration. They measure agreement with this small finite-difference reference and ansatz, not performance on noisy hardware or quantum speedup.
 
 The principal implementation constraints are therefore visible in the code: the dense path explicitly constructs matrices and exact statevectors; the tensor-train path has a configurable bond-dimension approximation; and the variational optimizer is classical. These choices make the prototype useful for validating the circuit construction and comparing representations on a small problem.
