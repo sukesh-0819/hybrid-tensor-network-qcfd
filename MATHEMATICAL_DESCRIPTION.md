@@ -4,7 +4,7 @@ This note follows one time step from the Burgers equation to the variational cir
 
 ## 1. Problem and notation
 
-The target is the one-dimensional viscous Burgers equation
+The target is the one-dimensional viscous Burgers equation:
 
 $$
 \frac{\partial u}{\partial t}
@@ -13,7 +13,7 @@ $$
 \qquad 0 \le x \le L.
 $$
 
-with zero boundary values. The code initializes the grid using $u_i^0=\sin(\pi x_i)$, then fixes the two endpoints to zero. With the demo's $L=1$, this is the standard $\sin(\pi x/L)$ profile.
+The boundary values are zero. The code initializes the grid using $u_i^0=\sin(\pi x_i)$, then fixes the two endpoints to zero. With the demo's $L=1$, this is the standard $\sin(\pi x/L)$ profile.
 
 The code uses $N$ equally spaced grid points, viscosity $\nu$, and final time $T$. Its default demonstration uses $N=8$, $L=1$, $\nu=0.1$, and $T=1$. The objective is to advance a vector of grid values, not to solve a continuum equation exactly.
 
@@ -44,8 +44,8 @@ The code stores these as $N$-by-$N$ matrices. Boundary rows are zero and the two
 $$
 u^{j+1}
 = u^j + \Delta t\left(\nu D_2u^j
-- \mathrm{diag}(u^j)D_1u^j\right).
-\tag{1}
+\;-\;\mathrm{diag}(u^j)D_1u^j\right).
+\qquad (1)
 $$
 
 Here $\mathrm{diag}(u)$ is a diagonal matrix whose diagonal entries are the values of $u$. It makes the nonlinear product $u\,u_x$ a matrix-vector product for a fixed current field.
@@ -68,7 +68,7 @@ r_j = \|u^j\|_2,\qquad
 \psi_j = \frac{u^j}{r_j},\qquad
 u^j=r_j\psi_j,\qquad
 \|\psi_j\|_2=1.
-\tag{2}
+\qquad (2)
 $$
 
 The normalized vector $\psi_j$ is represented by amplitudes of $n$ data qubits, where
@@ -86,9 +86,9 @@ $$
 u^{j+1}
 = r_j\left[
 I+\Delta t\,\nu D_2
--\Delta t\,r_j\mathrm{diag}(\psi_j)D_1
+\;-\;\Delta t\,r_j\mathrm{diag}(\psi_j)D_1
 \right]\psi_j.
-\tag{3}
+\qquad (3)
 $$
 
 Define
@@ -101,7 +101,7 @@ $$
 $$
 D_{\psi_j}=\mathrm{diag}(\psi_j),\qquad
 M_j=O_L+r_jD_{\psi_j}O_C.
-\tag{4}
+\qquad (4)
 $$
 
 Then the update is simply
@@ -110,7 +110,7 @@ $$
 u^{j+1}=r_jM_j\psi_j,\quad
 r_{j+1}=r_j\|M_j\psi_j\|_2,\quad
 \psi_{j+1}=\frac{M_j\psi_j}{\|M_j\psi_j\|_2}.
-\tag{5}
+\qquad (5)
 $$
 
 The key dependency is visible in (4): $O_L$ and $O_C$ are fixed for the run, while $D_{\psi_j}$ changes with the field at every time step.
@@ -161,14 +161,14 @@ U_M=
 A & \sqrt{I-AA^\dagger}\\
 \sqrt{I-A^\dagger A} & -A^\dagger
 \end{bmatrix}.
-\tag{6}
+\qquad (6)
 $$
 
 The square roots are positive-semidefinite matrix square roots. For an ancilla in state $|0\rangle$, the selected block obeys
 
 $$
 (\langle 0|\otimes I)\,U_M\,(|0\rangle\otimes I)=M/c_M.
-\tag{7}
+\qquad (7)
 $$
 
 Thus, after projecting the flag ancilla back onto zero, the data register has undergone the desired matrix divided by its known scale. The scale is carried separately in classical arithmetic.
@@ -191,14 +191,14 @@ $$
 \beta_1=c_L,\qquad
 \beta_2=c_Cc_{D,j}r_j,\qquad
 \beta=\beta_1+\beta_2.
-\tag{8}
+\qquad (8)
 $$
 
 The controlled rotation angle is
 
 $$
 \omega=2\arccos\sqrt{\frac{\beta_2}{\beta}}.
-\tag{9}
+\qquad (9)
 $$
 
 Starting from lcu=$|0\rangle$, $R_y(\omega)$ gives amplitude $\sqrt{\beta_2/\beta}$ to selector value 0 (the nonlinear branch) and $\sqrt{\beta_1/\beta}$ to selector value 1 (the linear branch). The circuit applies:
@@ -210,13 +210,13 @@ It then applies the inverse rotation $R_y(-\omega)$. Projecting lcu back onto ze
 
 $$
 \frac{\beta_2}{\beta}\frac{D_{\psi_j}O_C}{c_Cc_{D,j}}
-+
+\;+\;
 \frac{\beta_1}{\beta}\frac{O_L}{c_L}
 =
 \frac{r_jD_{\psi_j}O_C+O_L}{\beta}
 =
 \frac{M_j}{\beta}.
-\tag{10}
+\qquad (10)
 $$
 
 This is why the nonlinear scale in (8) includes the current norm $r_j$. The selector weights compensate for the normalization inside each block encoding.
@@ -225,7 +225,7 @@ The outer control qubit is put into a superposition by $H$. One branch is the re
 
 $$
 \frac{1}{\sqrt{2}}\frac{M_j\psi_j}{\beta}.
-\tag{11}
+\qquad (11)
 $$
 
 The factor $1/\sqrt{2}$ comes from the initial Hadamard.
@@ -239,27 +239,27 @@ $$
 \frac{M_j|\psi_j\rangle}{\beta}
 =
 \frac{\langle\psi(\theta')|M_j|\psi_j\rangle}{\beta}.
-\tag{12}
+\qquad (12)
 $$
 
-A final $R_y(-\phi)$ on the outer control converts the reference/update amplitude balance into a control-qubit $Z$ expectation. Probabilities are conditioned on the lcu, A1, and A2 flags all being zero. The optimizer minimizes
+A final $R_y(-\phi)$ on the outer control converts the reference/update amplitude balance into a control-qubit Z expectation. Probabilities are conditioned on the lcu, A1, and A2 flags all being zero. The optimizer minimizes
 
 $$
 C(\theta',\phi)=1-\langle Z\rangle_{\mathrm{postselected}}.
-\tag{13}
+\qquad (13)
 $$
 
 Driving this cost toward zero aligns the candidate state with the normalized update while fitting $\phi$ to the update's magnitude. The exact statevector version evaluates these probabilities directly. If a finite shot count is supplied, the code samples basis outcomes instead.
 
-The code also computes a fidelity from the measured $Z$ expectation $e_z$, $\alpha$, and $\phi$:
+The code also computes a fidelity from the measured Z expectation $e_z$, $\alpha$, and $\phi$:
 
 $$
 F =
 \frac{\left[\alpha(e_z+\cos\phi)+e_z-\cos\phi\right]^2}
 {4\alpha\sin^2\phi},
 \qquad
-\alpha=\tan^2(\phi/2),
-\tag{14}
+\alpha=\tan^2(\phi/2).
+\qquad (14)
 $$
 
 For diagnostics, it compares this estimate against the direct squared overlap between the trained ansatz state and the normalized classical vector $M_j\psi_j$.
@@ -271,7 +271,7 @@ The scale-adjusted update length is represented by
 $$
 \alpha_{\mathrm{exact}}=
 \frac{\|M_j\psi_j\|_2^2}{\beta^2}.
-\tag{15}
+\qquad (15)
 $$
 
 The circuit extracts $\alpha$ from the trained angle using $\tan^2(\phi/2)$. The code's norm relation is
@@ -288,7 +288,7 @@ $$
 f_O(\alpha,\phi)=
 \frac{1+\alpha}
 {2\sin\phi-(\sqrt{\alpha}-1/\sqrt{\alpha})\cos\phi}.
-\tag{16}
+\qquad (16)
 $$
 
 On the intended positive-angle branch with $\alpha=\tan^2(\phi/2)$, $f_O=\sqrt{\alpha}$. Thus (16) gives
@@ -296,7 +296,7 @@ On the intended positive-angle branch with $\alpha=\tan^2(\phi/2)$, $f_O=\sqrt{\
 $$
 r_{j+1}=\beta\sqrt{\alpha}\,r_j
 \approx r_j\|M_j\psi_j\|_2,
-\tag{17}
+\qquad (17)
 $$
 
 which is exactly the magnitude relation in (5) when $\alpha$ matches (15). The field returned to the next step is $r_{j+1}\psi(\theta')$.
@@ -315,7 +315,7 @@ G^{(0)}_{1,i_0,b_0}
 G^{(1)}_{b_0,i_1,b_1}
 \cdots
 G^{(n-1)}_{b_{n-2},i_{n-1},1}.
-\tag{18}
+\qquad (18)
 $$
 
 The internal indices $b$ are bond indices; their maximum size is the bond dimension $\chi$. The compiler creates cores from the RY/CX ansatz itself. After each CNOT, it reshapes a neighboring pair of cores, performs an SVD, and keeps at most $\chi_{\max}$ singular directions. If no truncation is needed, contracting the cores reproduces the ansatz state.
